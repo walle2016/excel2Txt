@@ -1,0 +1,217 @@
+import os
+
+import re
+import tkinter as tk
+import xlrd3 
+import xml.etree.ElementTree
+
+from pathlib import *
+from decimal import *
+from tkinter.filedialog import *
+from tkinter.messagebox import *
+
+FLAG_CLIENT = 'clinet'
+FLAG_SERVERS ='servers'
+MIN_ROW = 5
+
+def open_excel(file_path):
+    try:
+        return xlrd3.open_workbook(file_path)
+    except Exception as e:
+        # showinfo(f"open {file_path}错误信息:{e}")
+        return None
+
+def excel_table_by_index(file_path, by_index=0):
+    data = open_excel(file_path)
+    if data is None:
+        # showinfo(f" 打开{file_path}失败")
+        return None
+
+    sheet_names = data.sheet_names()
+    # showinfo(f"sheets{sheet_names} len:{len(sheet_names)}")
+    if len(sheet_names) <= 0:
+        # showinfo(f"{file_path}sheet is null")
+        return
+
+    table = data.sheet_by_name(sheet_names[by_index])
+    row_data_list = []
+    for row in range(table.nrows):
+        columns = table.row_values(row) 
+        row_data_list.append(columns)
+    return row_data_list
+
+def writeHeadToFile(fd, cells_flag, cell):
+    headList = []
+    for index, item in enumerate(cell):
+        if cells_flag[index]:
+            print(f'{index}\t{item}')
+            headList.append(item)
+    txt_line = '\t'.join(str(item) for item in headList)
+    print(f'txt_line:{txt_line}')
+    fd.write(txt_line+'\n')
+
+def writeBodyToFile(fd, cells_flag, cells_type, cell):
+    bodyList = []
+    for index, item in enumerate(cell):
+        if cells_flag[index]:
+            if 'uint8' == cells_type[index] or 'uint16' == cells_type[index] or 'uint32' == cells_type[index] :
+                bodyList.append(int(item))
+            elif 'float' == cells_type[index] :
+                bodyList.append(Decimal(float(item)).quantize(Decimal('.01'), rounding=ROUND_DOWN))
+            elif 'string' == cells_type[index] :
+                bodyList.append(item)
+            elif  'array' == cells_type[index] :
+                res_list = item.split(r'|')
+                for it in res_list :
+                    pattern = re.compile(r'\d+;\d+')
+                    m = pattern.match(it)
+                    if m: 
+                        print("数据格式正确")
+                    else:
+                        print("数据格式错误")
+                        exit(1)
+                bodyList.append(item)
+            else :
+                print(f'unknow type :{cells_type[index]}')
+                exit(1)
+            print(f'index:{index}\ttype:{cells_type[index]}\t{item}') 
+    txt_line = '\t'.join(str(item) for item in bodyList)
+    print(f'txt_line:{txt_line}')
+    fd.write(txt_line+'\n')
+
+def toTxt(output_dir, file_name, flag, tables):
+    lenght = len(tables)
+    if lenght <= MIN_ROW:
+        print(f'{file_name} row count = {lenght} ')
+        return False
+    
+    # showinfo(f'output_dir:{output_dir}')
+    out_file_path = PurePath.joinpath(Path(output_dir),flag,file_name+'.txt')
+    # showinfo(f'out_file_path:{out_file_path}')
+    try:
+        file = open(out_file_path, "w+")
+    except Exception as e:
+        print(f"create {out_file_path}失败,错误信息:{e}")
+        return False
+    
+    file.truncate()
+
+    cells_flag = []
+    if FLAG_CLIENT == flag:
+        cells_flag = tables[3]
+    elif FLAG_SERVERS == flag :
+        cells_flag = tables[4]
+    
+    cells_type = tables[2]
+    
+    writeHeadToFile(file, cells_flag, tables[0])
+    writeHeadToFile(file, cells_flag, tables[2])
+    for row in range(MIN_ROW,lenght): 
+        writeBodyToFile(file, cells_flag, cells_type, tables[row])
+
+    file.close()
+    return True  
+
+def get_files(directory_path, out_file_path):
+    cur_dir = Path(directory_path)
+    # for root, dirs, files in os.walk(directory_path):
+    files = [file for file in cur_dir.glob("**/*")]
+    for file in files:
+        if file.is_file():
+            # showinfo(f'file:{file.name}')
+            file_name = file.stem
+            if file_name.startswith('.') or  file_name.startswith('~'):
+                continue 
+            file_suffix = file.suffix
+            if '.xlsx' != file_suffix.lower():
+                print(f"{file} suffix is not .xlsx")
+                continue
+            # file_path = PurePath.joinpath(root, file)
+            tables = excel_table_by_index(file)
+            if None == tables:
+                # showinfo(f'++++++++>>>>>> {file.name} failed')
+                return None
+            bRet = toTxt(out_file_path, file_name, FLAG_CLIENT, tables)
+            if False == bRet :
+                # showinfo(f'++++++++>>>>>> {FLAG_CLIENT} {file.name} failed')
+                return None
+            bRet = toTxt(out_file_path, file_name, FLAG_SERVERS, tables)
+            if False == bRet :
+                # showinfo(f'++++++++>>>>>> {FLAG_SERVERS} {file.name} failed')
+                return None
+            print(f'++++++++>>>>>>end {file} success')
+# def main():
+#     print("=====main")
+#     client_dir = os.path.join(DIRECTORY_OUTPUT_PATH, FLAG_CLIENT) 
+#     if False == os.path.exists(client_dir):
+#         os.mkdir(client_dir)
+   
+#     servers_dir = os.path.join(DIRECTORY_OUTPUT_PATH, FLAG_SERVERS)
+#     if False == os.path.exists(servers_dir):
+#         os.mkdir(servers_dir)
+#     get_files(DIRECTORY_SRC_PATH)
+
+def startTask():
+    directory_src_path = src_dir.get()
+    directory_output_path = output_dir.get()
+    print(directory_src_path)
+    print(directory_output_path)
+    
+    client_dir = os.path.join(directory_output_path, FLAG_CLIENT) 
+    if not Path(client_dir).exists():
+        Path.mkdir(Path(client_dir)) 
+    
+    servers_dir = os.path.join(directory_output_path, FLAG_SERVERS)
+    if not Path(servers_dir).exists():
+        Path.mkdir(Path(servers_dir))
+    
+    get_files(directory_src_path, directory_output_path)
+    print(showinfo("information","导出完成！！！"))
+
+def openSrcDir():
+    fileDir = askdirectory()  # 选择目录，返回目录名
+    if fileDir.strip() != '':
+        src_dir.set(fileDir)  # 设置变量src_dir的值
+    else:
+        print("do not choose Dir")
+    
+    # cur_dir = Path(src_dir.get())
+    # files = [file for file in cur_dir.glob("**/*")]
+    # for file in files:
+    #     if file.is_file():
+    #         print(file)
+    #         print(file.name)  # 返回文件名+文件后缀
+    #         print(file.stem)  # 返回文件名
+    #         print(file.suffix)  # 返回文件后缀
+
+def openOutputDir():
+    fileDir = askdirectory()  # 选择目录，返回目录名
+    if fileDir.strip() != '':
+        output_dir.set(fileDir)  # 设置变量output_dir的值
+    else:
+        print("do not choose Dir")
+
+if __name__ == "__main__":
+    # main()
+
+    root = tk.Tk()
+    root.title("excel2txt")
+    #  root.geometry('800x600')
+    root.resizable(False, False)
+    src_dir = tk.StringVar()
+    output_dir = tk.StringVar()
+
+    # 设置源目录
+    tk.Label(root, text='Excel目录').grid(row=1, column=0, padx=5, pady=5) # 创建label 提示这是选择目录
+    tk.Entry(root, textvariable=src_dir).grid(row=1, column=1, padx=5, pady=5) # 创建Entry，显示选择的目录
+    tk.Button(root, text='打开目录', command=openSrcDir).grid(row=1, column=2, padx=5, pady=5)
+
+    # 选择目标目录
+    tk.Label(root, text='导出目录').grid(row=2, column=0, padx=5, pady=5) # 创建label 提示这是选择目录
+    tk.Entry(root, textvariable=output_dir).grid(row=2, column=1, padx=5, pady=5) # 创建Entry，显示选择的目录
+    tk.Button(root, text='打开目录', command=openOutputDir).grid(row=2, column=2, padx=5, pady=5)
+    
+    tk.Button(root, text='导出', command=startTask).grid(row=3, column=2, padx=5, pady=5)
+    
+    root.mainloop()
+
